@@ -81,7 +81,7 @@ variable "ram_size" {
 
 variable "image_os" {
   type    = string
-  default = "macos13"
+  default = "macos15"
 }
 
 source "veertu-anka-vm-clone" "template" {
@@ -112,7 +112,6 @@ build {
   provisioner "file" {
     destination = "${local.image_folder}/"
     sources     = [
-      "${path.root}/../assets/xamarin-selector",
       "${path.root}/../scripts/tests",
       "${path.root}/../scripts/docs-gen",
       "${path.root}/../scripts/helpers"
@@ -150,19 +149,16 @@ build {
 
   provisioner "file" {
     destination = "${local.image_folder}/toolset.json"
-    source      = "${path.root}/../toolsets/toolset-13.json"
+    source      = "${path.root}/../toolsets/toolset-15.json"
   }
 
   provisioner "shell" {
     execute_command = "sudo sh -c '{{ .Vars }} {{ .Path }}'"
     inline          = [
       "mv ${local.image_folder}/docs-gen ${local.image_folder}/software-report",
-      "mv ${local.image_folder}/xamarin-selector ${local.image_folder}/assets",
       "mkdir ~/utils",
-      "mv ${local.image_folder}/helpers/confirm-identified-developers.scpt ~/utils",
       "mv ${local.image_folder}/helpers/invoke-tests.sh ~/utils",
-      "mv ${local.image_folder}/helpers/utils.sh ~/utils",
-      "mv ${local.image_folder}/helpers/xamarin-utils.sh ~/utils"
+      "mv ${local.image_folder}/helpers/utils.sh ~/utils"
     ]
   }
 
@@ -170,7 +166,8 @@ build {
     execute_command = "chmod +x {{ .Path }}; source $HOME/.bash_profile; {{ .Vars }} {{ .Path }}"
     scripts         = [
       "${path.root}/../scripts/build/install-xcode-clt.sh",
-      "${path.root}/../scripts/build/install-homebrew.sh"
+      "${path.root}/../scripts/build/install-homebrew.sh",
+      "${path.root}/../scripts/build/install-rosetta.sh"
     ]
   }
 
@@ -207,10 +204,8 @@ build {
     execute_command  = "chmod +x {{ .Path }}; source $HOME/.bash_profile; {{ .Vars }} {{ .Path }}"
     pause_before     = "30s"
     scripts          = [
-      "${path.root}/../scripts/build/install-rosetta.sh",
       "${path.root}/../scripts/build/configure-windows.sh",
       "${path.root}/../scripts/build/install-powershell.sh",
-      "${path.root}/../scripts/build/install-mono.sh",
       "${path.root}/../scripts/build/install-dotnet.sh",
       "${path.root}/../scripts/build/install-python.sh",
       "${path.root}/../scripts/build/install-azcopy.sh",
