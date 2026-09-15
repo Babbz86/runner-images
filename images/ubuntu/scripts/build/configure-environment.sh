@@ -31,6 +31,7 @@ sed -i 's/::1 ip6-localhost ip6-loopback/::1     localhost ip6-localhost ip6-loo
 AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache
 mkdir $AGENT_TOOLSDIRECTORY
 set_etc_environment_variable "AGENT_TOOLSDIRECTORY" "${AGENT_TOOLSDIRECTORY}"
+set_etc_environment_variable "RUNNER_TOOL_CACHE" "${AGENT_TOOLSDIRECTORY}"
 chmod -R 777 $AGENT_TOOLSDIRECTORY
 
 # https://www.elastic.co/guide/en/elasticsearch/reference/current/vm-max-map-count.html
@@ -51,6 +52,32 @@ mkdir -p $rules_directory
 touch $netfilter_rule
 echo 'ACTION=="add", SUBSYSTEM=="module", KERNEL=="nf_conntrack", RUN+="/usr/sbin/sysctl net.netfilter.nf_conntrack_tcp_be_liberal=1"' | tee -a $netfilter_rule
 
+# https://github.com/actions/runner-images/issues/13770
+# https://github.com/ravendb/ravendb/discussions/22410
+# Linux kernel 6.17 changed read_ahead_kb default from 128 to 4096 on Azure VMs
+# where disks are presented as rotational (ROTA=1). This floods the page cache
+# with unused data during random-access I/O and causes memory exhaustion and thrashing.
+# Azure v4 VM series use SCSI disks (sd*); v5/v6 use NVMe namespaces (nvme*n*).
+if ! is_ubuntu22; then
+    readahead_rule='/etc/udev/rules.d/99-readahead.rules'
+    echo 'ACTION=="add|change", KERNEL=="sd*|nvme*n*", ATTR{queue/read_ahead_kb}="128"' | tee "$readahead_rule"
+fi
+
+# Relax root filesystem durability guarantees to speed up I/O heavy workloads. Runner VMs are
+# ephemeral, so losing recent writes on an unclean shutdown is acceptable.
+# data= and journal_async_commit can only be set on the initial mount performed by the initramfs,
+# so they have to be passed through rootflags on the kernel command line rather than through fstab.
+root_fs_type=$(findmnt --noheadings --first-only --output FSTYPE --target /)
+if [[ "$root_fs_type" != "ext4" ]]; then
+    echo "Expected an ext4 root filesystem but found '${root_fs_type}', refusing to set ext4 rootflags"
+    exit 1
+fi
+
+grub_dropin='/etc/default/grub.d/99-runner-performance.cfg'
+mkdir -p "$(dirname "$grub_dropin")"
+echo 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT rootflags=nobarrier,data=writeback,journal_async_commit,commit=30"' | tee "$grub_dropin"
+update-grub
+
 # Create symlink for tests running
 chmod +x $HELPER_SCRIPTS/invoke-tests.sh
 ln -s $HELPER_SCRIPTS/invoke-tests.sh /usr/local/bin/invoke_tests
@@ -58,9 +85,18 @@ ln -s $HELPER_SCRIPTS/invoke-tests.sh /usr/local/bin/invoke_tests
 # Disable motd updates metadata
 sed -i 's/ENABLED=1/ENABLED=0/g' /etc/default/motd-news
 
+# Remove fwupd if installed. We're running on VMs in Azure and the fwupd package is not needed.
+# Leaving it enable means periodic refreshes show in network traffic and firewall logs
+# Check if fwupd-refresh.timer exists in systemd
+if systemctl list-unit-files fwupd-refresh.timer &>/dev/null; then
+    echo "Masking fwupd-refresh.timer..."
+    systemctl mask fwupd-refresh.timer
+fi
+
+# This is a legacy check, leaving for earlier versions of Ubuntu
+# If fwupd config still exists, disable the motd updates
 if [[ -f "/etc/fwupd/daemon.conf" ]]; then
     sed -i 's/UpdateMotd=true/UpdateMotd=false/g' /etc/fwupd/daemon.conf
-    systemctl mask fwupd-refresh.timer
 fi
 
 # Disable to load providers
@@ -68,3 +104,7 @@ fi
 if is_ubuntu22; then
     sed -i 's/openssl_conf = openssl_init/#openssl_conf = openssl_init/g' /etc/ssl/openssl.cnf
 fi
+
+# Disable man-db auto update
+echo "set man-db/auto-update false" | debconf-communicate
+dpkg-reconfigure man-db

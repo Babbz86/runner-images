@@ -7,39 +7,32 @@
 # Source the helpers for use with the script
 source $HELPER_SCRIPTS/os.sh
 
-#
-# pin podman due to https://github.com/actions/runner-images/issues/7753
+# Pin podman due to https://github.com/actions/runner-images/issues/7753
 #                   https://bugs.launchpad.net/ubuntu/+source/libpod/+bug/2024394
-#
-if ! is_ubuntu22; then
-    install_packages=(podman buildah skopeo)
-else
+if is_ubuntu22; then
     install_packages=(podman=3.4.4+ds1-1ubuntu1 buildah skopeo)
+else
+    install_packages=(podman buildah skopeo)
 fi
 
-# Packages is available in the official Ubuntu upstream starting from Ubuntu 21
-if is_ubuntu20; then
-    REPO_URL="https://download.opensuse.org/repositories/devel:/kubic:/libcontainers:/stable/xUbuntu_$(lsb_release -rs)"
-    GPG_KEY="/usr/share/keyrings/devel_kubic_libcontainers_stable.gpg"
-    REPO_PATH="/etc/apt/sources.list.d/devel:kubic:libcontainers:stable.list"
-
-    curl -fsSL "${REPO_URL}/Release.key" | gpg --dearmor -o $GPG_KEY
-    echo "deb [arch=amd64 signed-by=$GPG_KEY] ${REPO_URL}/ /" > $REPO_PATH
+if is_ubuntu22_x64; then
+    # Install containernetworking-plugins for Ubuntu 22 x64
+    curl -O http://archive.ubuntu.com/ubuntu/pool/universe/g/golang-github-containernetworking-plugins/containernetworking-plugins_1.1.1+ds1-3build1_amd64.deb
+    dpkg -i containernetworking-plugins_1.1.1+ds1-3build1_amd64.deb
 fi
 
-# Install podman, buildah, skopeo container's tools
 apt-get update
 apt-get install ${install_packages[@]}
+
 mkdir -p /etc/containers
-printf "[registries.search]\nregistries = ['docker.io', 'quay.io']\n" | tee /etc/containers/registries.conf
+printf 'unqualified-search-registries = ["docker.io", "quay.io"]\n' | tee /etc/containers/registries.conf
 
-if is_ubuntu20; then
-    # Remove source repo
-    rm $GPG_KEY
-    rm $REPO_PATH
-
-    # Document source repo
-    echo "containers $REPO_URL" >> $HELPER_SCRIPTS/apt-sources.txt
+# https://github.com/actions/runner-images/issues/14230
+# netavark on Ubuntu 26.04 defaults to nftables and fails name resolution
+if is_ubuntu26; then
+    mkdir -p /etc/containers/containers.conf.d
+    printf '[network]\nfirewall_driver = "iptables"\n' | tee /etc/containers/containers.conf.d/99-fix-firewall.conf
+    podman network reload --all 2>/dev/null
 fi
 
 invoke_tests "Tools" "Containers"

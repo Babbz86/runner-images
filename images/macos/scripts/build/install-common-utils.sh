@@ -6,48 +6,122 @@
 
 source ~/utils/utils.sh
 
-# Monterey needs future review:
-# aliyun-cli, gnupg, helm have issues with building from the source code.
-# Added gmp for now, because toolcache ruby needs its libs. Remove it when php starts to build from source code.
+# homebrew-core dropped the Intel bottles for gmp on 2026-09-02, and gmplib.org blocks
+# GitHub server IPs so the source build cannot fetch the tarball. Install the last bottled
+# revision before gnupg pulls gmp in as a dependency.
+if ! is_Arm64; then
+    COMMIT=f97a5a6fd3dee66c7f015608b82ad047a29e2c9b
+    FILE_NAME="g/gmp.rb"
+    FORMULA_NAME="gmp"
+    brew_install_pinned_formula "$FORMULA_NAME" "$FILE_NAME" "$COMMIT"
+fi
+
 common_packages=$(get_toolset_value '.brew.common_packages[]')
 for package in $common_packages; do
     echo "Installing $package..."
-    if is_Monterey && [[ $package == "xcbeautify" ]]; then
-        # Pin the version on Monterey as 2.0.x requires Xcode >=15.0 which is not available on OS12
-        xcbeautify_path=$(download_with_retry "https://raw.githubusercontent.com/Homebrew/homebrew-core/d3653e83f9c029a3fddb828ac804b07ac32f7b3b/Formula/x/xcbeautify.rb")
-        brew install "$xcbeautify_path"
-    else
-        brew_smart_install "$package"
-    fi
+    case "$package" in
+        packer)
+            # Packer has been deprecated in Homebrew. Use tap to install Packer.
+            brew tap hashicorp/tap
+            brew trust hashicorp/tap
+            brew install hashicorp/tap/packer
+            ;;
+
+        tcl-tk@8)
+            brew_smart_install "$package"
+            if is_SonomaX64 || is_SequoiaX64 || is_TahoeX64; then
+                # Fix for https://github.com/actions/runner-images/issues/11074
+                ln -sf "$(brew --prefix tcl-tk@8)/lib/libtcl8.6.dylib" /usr/local/lib/libtcl8.6.dylib
+                ln -sf "$(brew --prefix tcl-tk@8)/lib/libtk8.6.dylib" /usr/local/lib/libtk8.6.dylib
+            fi
+            ;;
+
+        xcodes)
+            if is_SequoiaArm64 || is_TahoeArm64 || is_GoldenGate; then
+                # xcodes formulae still works on MacOS 15 ARM and 26 ARM
+                brew_smart_install "$package"
+            else
+                # homebrew-core ships no x86_64 bottle for current xcodes, and building it
+                # from source needs xcbuild (unavailable during image build). Install the
+                # prebuilt Developer-ID-signed universal binary from XcodesOrg's release.
+                echo "Installing xcodes from XcodesOrg release..."
+                curl -fsSL "https://github.com/XcodesOrg/xcodes/releases/latest/download/xcodes.zip" -o /tmp/xcodes.zip
+                unzip -oq /tmp/xcodes.zip -d /tmp/xcodes-bin
+                sudo install -m 0755 /tmp/xcodes-bin/xcodes /usr/local/bin/xcodes
+                rm -rf /tmp/xcodes.zip /tmp/xcodes-bin
+            fi
+            ;;
+
+        gnu-tar)
+            if ! is_Arm64; then
+                # For the Intel images gnu-tar stopped to work, using pinned commit
+                COMMIT=f80d41dc9db047924348b69d03f398e9e8b19598
+                FILE_NAME="g/gnu-tar.rb"
+                FORMULA_NAME="gnu-tar"
+                brew_install_pinned_formula "$FORMULA_NAME" "$FILE_NAME" "$COMMIT"
+            else
+                brew_smart_install "$package"
+            fi
+            ;;
+
+        swiftformat)
+            if ! is_Arm64; then
+                COMMIT=cb845e90e905cb254daaf82a721ac972c3307b03
+                FILE_NAME="s/swiftformat.rb"
+                FORMULA_NAME="swiftformat"
+                brew_install_pinned_formula "$FORMULA_NAME" "$FILE_NAME" "$COMMIT"
+            else
+                brew_smart_install "$package"
+            fi
+            ;;
+
+        # Default behaviour for all other packages
+        *)
+            brew_smart_install "$package"
+            ;;
+    esac
 done
 
 cask_packages=$(get_toolset_value '.brew.cask_packages[]')
 for package in $cask_packages; do
     echo "Installing $package..."
-    if is_Monterey && [[ $package == "virtualbox" ]]; then
-        # Do not update VirtualBox on macOS 12 due to the issue with VMs in gurumediation state which blocks Vagrant on macOS: https://github.com/actions/runner-images/issues/8730
-        # macOS host: Dropped all kernel extensions. VirtualBox relies fully on the hypervisor and vmnet frameworks provided by Apple now.
-        virtualbox_cask_path=$(download_with_retry "https://raw.githubusercontent.com/Homebrew/homebrew-cask/aa3c55951fc9d687acce43e5c0338f42c1ddff7b/Casks/virtualbox.rb")
-        brew install $virtualbox_cask_path
+    if is_Arm64 && [[ $package == "parallels" ]]; then
+        echo "Parallels installation is skipped for arm64 architecture"
     else
-        brew install --cask $package
+        if [[ $package == "parallels" ]]; then
+            # Workaround for https://github.com/github/hosted-runners-images/issues/886
+            CASK_NAME="parallels"
+            CASK_URL="https://raw.githubusercontent.com/Homebrew/homebrew-cask/adfc07a7bc28a32037851be4d7a0bd4f8b239565/Casks/p/${CASK_NAME}.rb"
+            
+            brew_install_pinned_cask "$CASK_NAME" "$CASK_URL"
+        else
+            brew install --cask $package
+        fi
     fi
 done
 
 # Load "Parallels International GmbH"
-if is_Monterey; then
+if is_SonomaX64 || is_SequoiaX64; then
     sudo kextload /Applications/Parallels\ Desktop.app/Contents/Library/Extensions/10.9/prl_hypervisor.kext || true
 fi
 
-# Execute AppleScript to change security preferences
+# Execute AppleScript to change security preferences for macOS12, macOS13, macOS14 and macOS15
 # System Preferences -> Security & Privacy -> General -> Unlock -> Allow -> Not now
-if is_Monterey; then
+if is_SonomaX64 || is_SequoiaX64; then
     for retry in {4..0}; do
         echo "Executing AppleScript to change security preferences. Retries left: $retry"
         {
             set -e
-            osascript -e 'tell application "System Events" to get application processes where visible is true'
-            osascript $HOME/utils/confirm-identified-developers.scpt $USER_PASSWORD
+            osascript -e 'tell application "System Events" to get application processes where visible is true' 
+
+            if is_SonomaX64; then
+                osascript $HOME/utils/confirm-identified-developers-macos14.scpt $USER_PASSWORD
+            fi
+
+            if is_SequoiaX64; then
+                osascript $HOME/utils/confirm-identified-developers-macos15.scpt $USER_PASSWORD
+            fi
+
         } && break
 
         if [[ $retry -eq 0 ]]; then
@@ -61,9 +135,10 @@ if is_Monterey; then
 fi
 
 # Validate "Parallels International GmbH" kext
-if is_Monterey; then
-    echo "Closing System Preferences window if it is still opened"
-    killall "System Preferences" || true
+if is_SonomaX64 || is_SequoiaX64; then
+
+    echo "Closing System Settings window if it is still opened"
+    killall "System Settings" || true
 
     echo "Checking parallels kexts"
     dbName="/var/db/SystemPolicyConfiguration/KextPolicy"

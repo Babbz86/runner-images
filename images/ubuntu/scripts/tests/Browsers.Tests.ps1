@@ -1,4 +1,4 @@
-Describe "Firefox" -Skip:((-not (Test-IsUbuntu20)) -and (-not (Test-IsUbuntu22))) {
+Describe "Firefox" {
     It "Firefox" {
         "firefox --version" | Should -ReturnZeroExitCode
     }
@@ -8,7 +8,7 @@ Describe "Firefox" -Skip:((-not (Test-IsUbuntu20)) -and (-not (Test-IsUbuntu22))
     }
 }
 
-Describe "Chrome" {
+Describe "Chrome" -Skip:(Test-IsArm64) {
     It "Chrome" {
         "google-chrome --version" | Should -ReturnZeroExitCode
     }
@@ -22,9 +22,13 @@ Describe "Chrome" {
         $chromeDriverMajor = (chromedriver --version).Trim("ChromeDriver ").Split(".")[0]
         $chromeMajor | Should -BeExactly $chromeDriverMajor
     }
+
+    It "Google Chrome apt repository is not configured" {
+        "/etc/apt/sources.list.d/google-chrome*" | Should -Not -Exist
+    }
 }
 
-Describe "Edge" -Skip:((-not (Test-IsUbuntu20)) -and (-not (Test-IsUbuntu22))) {
+Describe "Edge" -Skip:(Test-IsArm64) {
     It "Edge" {
         "microsoft-edge --version" | Should -ReturnZeroExitCode
     }
@@ -34,7 +38,7 @@ Describe "Edge" -Skip:((-not (Test-IsUbuntu20)) -and (-not (Test-IsUbuntu22))) {
     }
 }
 
-Describe "Chromium" {
+Describe "Chromium" -Skip:(Test-IsArm64) {
     It "Chromium" {
         "chromium-browser --version" | Should -ReturnZeroExitCode
     }

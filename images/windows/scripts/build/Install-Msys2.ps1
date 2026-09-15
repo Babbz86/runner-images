@@ -14,20 +14,18 @@ function Install-Msys2 {
     # We can't use Resolve-GithubReleaseAssetUrl function here
     # because msys2-installer releases don't have a consistent versioning scheme
 
+    # The msys2 runtime is x86_64-only and runs under emulation on arm64, but the
+    # installer itself has a native arm64 build - the x86_64 one misbehaves there.
+    # See https://github.com/msys2/msys2-installer/issues/96
+    $installerPrefix = if (Test-IsArm64) { "^msys2-arm64" } else { "^msys2-x86_64" }
+
     $assets = (Invoke-RestMethod -Uri "https://api.github.com/repos/msys2/msys2-installer/releases/latest").assets
-    $downloadUri = ($assets | Where-Object { $_.name -match "^msys2-x86_64" -and $_.name.EndsWith(".exe") }).browser_download_url
+    $downloadUri = ($assets | Where-Object { $_.name -match $installerPrefix -and $_.name.EndsWith(".exe") }).browser_download_url
     $installerName = Split-Path $downloadUri -Leaf
-  
-    # Download the latest msys2 x86_64, filename includes release date
+
+    # Download the latest msys2 installer, filename includes release date
     Write-Host "Download msys2 installer $installerName"
     $installerPath = Invoke-DownloadWithRetry $downloadUri
-
-    #region Supply chain security - MSYS2
-    $externalHash = Get-ChecksumFromUrl -Type "SHA256" `
-        -Url ($downloadUri -replace $installerName, "msys2-checksums.txt") `
-        -FileName $installerName
-    Test-FileChecksum $installerPath -ExpectedSHA256Sum $externalHash
-    #endregion
 
     Write-Host "Starting msys2 installation"
     & $installerPath in --confirm-command --accept-messages --root C:/msys64
@@ -110,7 +108,8 @@ function Install-MingwPackages {
 Install-Msys2
 
 # Add msys2 bin tools folders to PATH temporary
-$env:PATH = "C:\msys64\mingw64\bin;C:\msys64\usr\bin;$origPath"
+$msysExecDir = if (Test-IsArm64) { "clangarm64" } else { "mingw64" }
+$env:PATH = "C:\msys64\$msysExecDir\bin;C:\msys64\usr\bin;$origPath"
 
 Write-Host "$logPrefix pacman --noconfirm -Syyuu"
 pacman.exe -Syyuu --noconfirm

@@ -4,8 +4,55 @@ Import-Module "$PSScriptRoot/Helpers.psm1" -DisableNameChecking
 $os = Get-OSVersion
 
 Describe ".NET" {
-    It ".NET" {
-        "dotnet --version" | Should -ReturnZeroExitCode
+    $arch = Get-Architecture
+    $dotnetVersions = (Get-ToolsetContent).dotnet.arch.${arch}.versions
+
+    Context "Default" {
+        It "Default Dotnet SDK is available" {
+            "dotnet --version" | Should -ReturnZeroExitCode
+        }
+    }
+
+    Context "Latest" {
+        $latestVersion = @($dotnetVersions | Sort-Object { [Version] $_ })[-1]
+        $dotnetLatest = @{ dotnetVersion = $latestVersion }
+
+        It "Latest SDK $latestVersion is available" -TestCases $dotnetLatest {
+            (dotnet --list-sdks | Where-Object { $_ -match "${dotnetVersion}\.[0-9]*" }).Count | Should -BeGreaterThan 0
+        }
+
+        It "Default 'dotnet --version' resolves to the latest SDK $latestVersion" -TestCases $dotnetLatest {
+            (dotnet --version) | Should -BeLike "${dotnetVersion}.*"
+        }
+    }
+
+    foreach ($version in $dotnetVersions) {
+        Context "Dotnet $version" {
+            $dotnet = @{ dotnetVersion = $version }
+
+            It "SDK $version is available" -TestCases $dotnet {
+                (dotnet --list-sdks | Where-Object { $_ -match "${dotnetVersion}\.[0-9]*" }).Count | Should -BeGreaterThan 0
+            }
+
+            It "Runtime $version is available" -TestCases $dotnet {
+                (dotnet --list-runtimes | Where-Object { $_ -match "${dotnetVersion}\.[0-9]*" }).Count | Should -BeGreaterThan 0
+            }
+        }
+    }
+
+    Context "Dotnet tools" {
+        $dotnetTools = (Get-ToolsetContent).dotnet.tools
+        $testCases = @($dotnetTools | Where-Object { $_ } | ForEach-Object { @{ ToolName = $_.name; TestInstance = $_.test } })
+
+        if ($testCases.Count -gt 0) {
+            $env:PATH = "$HOME/.dotnet/tools:$env:PATH"
+
+            It "<ToolName> is available" -TestCases $testCases {
+                "$TestInstance" | Should -ReturnZeroExitCode
+            }
+        } else {
+            It "has no dotnet tools defined in toolset" -Skip:$true {}
+        }
     }
 }
 
@@ -33,7 +80,7 @@ Describe "GCC" {
     }
 }
 
-Describe "vcpkg" -Skip:($os.IsVenturaArm64 -or $os.IsSonomaArm64 -or $os.IsSonoma) {
+Describe "vcpkg" {
     It "vcpkg" {
         "vcpkg version" | Should -ReturnZeroExitCode
     }
@@ -58,74 +105,15 @@ Describe "AzCopy" {
     }
 }
 
-Describe "Miniconda" -Skip:($os.IsVentura -or $os.IsSonoma) {
-    It "Conda" {
-        [System.Environment]::GetEnvironmentVariable("CONDA") | Should -Not -BeNullOrEmpty
-        $condaBinPath = Join-Path $env:CONDA "bin" "conda"
-        "$condaBinPath --version" | Should -ReturnZeroExitCode
-    }
-}
-
-Describe "Stack" -Skip:($os.IsVentura -or $os.IsSonoma) {
-    It "Stack" {
-        "stack --version" | Should -ReturnZeroExitCode
-    }
-}
-
 Describe "CocoaPods" {
     It "CocoaPods" {
         "pod --version" | Should -ReturnZeroExitCode
     }
 }
 
-Describe "VSMac" -Skip:($os.IsVentura -or $os.IsSonoma) {
-    $vsMacVersions = (Get-ToolsetContent).xamarin.vsmac.versions
-    $defaultVSMacVersion = (Get-ToolsetContent).xamarin.vsmac.default
-
-    $testCases = $vsMacVersions | ForEach-Object {
-        $vsPath = "/Applications/Visual Studio $_.app"
-        if ($_ -eq $defaultVSMacVersion) {
-            $vsPath = "/Applications/Visual Studio.app"
-        }
-
-        @{ vsversion = $_ ; vspath = $vsPath }
-    }
-
-    It "Visual Studio <vsversion> for Mac is installed" -TestCases $testCases {
-        $vstoolPath = Join-Path $vsPath "Contents/MacOS/vstool"
-        $vsPath | Should -Exist
-        $vstoolPath | Should -Exist
-    }
-
-    It "Visual Studio $defaultVSMacVersion for Mac is default" {
-        $vsPath = "/Applications/Visual Studio.app"
-        $vstoolPath = Join-Path $vsPath "Contents/MacOS/vstool"
-        $vsPath | Should -Exist
-        $vstoolPath | Should -Exist
-    }
-}
-
-Describe "Swig" -Skip:($os.IsVentura -or $os.IsSonoma) {
-    It "Swig" {
-        "swig -version" | Should -ReturnZeroExitCode
-    }
-}
-
 Describe "Bicep" {
     It "Bicep" {
         "bicep --version" | Should -ReturnZeroExitCode
-    }
-}
-
-Describe "Go" -Skip:($os.IsVentura -or $os.IsSonoma) {
-    It "Go" {
-        "go version" | Should -ReturnZeroExitCode
-    }
-}
-
-Describe "VirtualBox" -Skip:($os.IsVentura -or $os.IsSonoma) {
-    It "Check kext kernel modules" {
-        kextstat | Out-String | Should -Match "org.virtualbox.kext"
     }
 }
 
@@ -141,8 +129,17 @@ Describe "CodeQL Bundle" {
     }
 }
 
-Describe "Colima" -Skip:($os.IsVentura -or $os.IsSonoma) {
-    It "Colima" {
-        "colima version" | Should -ReturnZeroExitCode
+Describe "Unxip" {
+    It "Unxip" {
+        "unxip --version" | Should -ReturnZeroExitCode
+    }
+}
+
+Describe "Sudoers" {
+    It "Sudo Cache" {
+        "sudo -v" | Should -ReturnZeroExitCode
+    }
+    It "Sudoers files" {
+        "sudo visudo -c" | Should -ReturnZeroExitCode
     }
 }

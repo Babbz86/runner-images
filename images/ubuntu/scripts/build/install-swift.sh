@@ -7,18 +7,28 @@
 # Source the helpers for use with the script
 source $HELPER_SCRIPTS/install.sh
 source $HELPER_SCRIPTS/etc-environment.sh
+source $HELPER_SCRIPTS/os.sh
 
 # Install
 image_label="ubuntu$(lsb_release -rs)"
 swift_version=$(curl -fsSL "https://api.github.com/repos/apple/swift/releases/latest" | jq -r '.tag_name | match("[0-9.]+").string')
-swift_release_name="swift-${swift_version}-RELEASE-${image_label}"
 
-archive_url="https://swift.org/builds/swift-${swift_version}-release/${image_label//./}/swift-${swift_version}-RELEASE/${swift_release_name}.tar.gz"
+if is_x64; then
+  swift_release_name="swift-${swift_version}-RELEASE-${image_label}"
+  archive_url="https://download.swift.org/swift-${swift_version}-release/${image_label//./}/swift-${swift_version}-RELEASE/${swift_release_name}.tar.gz"
+elif is_arm64; then
+  swift_release_name="swift-${swift_version}-RELEASE-${image_label}-aarch64"
+  archive_url="https://download.swift.org/swift-${swift_version}-release/${image_label//./}-aarch64/swift-${swift_version}-RELEASE/${swift_release_name}.tar.gz"
+else
+  echo "Unsupported architecture"
+  exit 1
+fi
+
 archive_path=$(download_with_retry "$archive_url")
 
 # Verifying PGP signature using official Swift PGP key. Referring to https://www.swift.org/install/linux/#Installation-via-Tarball
 # Download and import Swift PGP keys
-gpg --keyserver hkp://keyserver.ubuntu.com \
+gpg --keyserver hkps://keyserver.ubuntu.com:443 \
       --recv-keys \
       '7463 A81A 4B2E EA1B 551F  FBCF D441 C977 412B 37AD' \
       '1BE1 E29A 084C B305 F397  D62A 9F59 7F4D 21A5 6D5F' \
@@ -27,8 +37,10 @@ gpg --keyserver hkp://keyserver.ubuntu.com \
       '8513 444E 2DA3 6B7C 1659  AF4D 7638 F1FB 2B2B 08C4' \
       'A62A E125 BBBF BB96 A6E0  42EC 925C C1CC ED3D 1561' \
       '8A74 9566 2C3C D4AE 18D9  5637 FAF6 989E 1BC1 6FEA' \
-      'E813 C892 820A 6FA1 3755  B268 F167 DF1A CF9C E069'
-gpg --keyserver hkp://keyserver.ubuntu.com --refresh-keys Swift
+      'E813 C892 820A 6FA1 3755  B268 F167 DF1A CF9C E069' \
+      '52BB 7E3D E28A 71BE 22EC  05FF EF80 A866 B47A 981F'
+
+gpg --keyserver hkps://keyserver.ubuntu.com:443 --refresh-keys Swift
 
 # Download and verify signature
 signature_path=$(download_with_retry "${archive_url}.sig")

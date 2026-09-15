@@ -23,12 +23,13 @@ $mobyReleaseUrl = $dockerceUrl + $mobyRelease
 
 Write-Host "Install Moby $mobyRelease..."
 $mobyArchivePath = Invoke-DownloadWithRetry $mobyReleaseUrl
-Expand-Archive -Path $mobyArchivePath -DestinationPath $env:TEMP
-$dockerPath = "$env:TEMP\docker\docker.exe"
-$dockerdPath = "$env:TEMP\docker\dockerd.exe"
+Expand-Archive -Path $mobyArchivePath -DestinationPath $env:TEMP_DIR
+$dockerPath = "$env:TEMP_DIR\docker\docker.exe"
+$dockerdPath = "$env:TEMP_DIR\docker\dockerd.exe"
 
 Write-Host "Install Docker CE"
-$instScriptUrl = "https://raw.githubusercontent.com/microsoft/Windows-Containers/Main/helpful_tools/Install-DockerCE/install-docker-ce.ps1"
+# Pinned to the last commit before docker.exe moved out of System32, which breaks the symlink below (actions/runner-images#14572)
+$instScriptUrl = "https://raw.githubusercontent.com/microsoft/Windows-Containers/8ea2a92d8dfa7815abcf5cc44a756a0ac3d0f513/helpful_tools/Install-DockerCE/install-docker-ce.ps1"
 $instScriptPath = Invoke-DownloadWithRetry $instScriptUrl
 & $instScriptPath -DockerPath $dockerPath -DockerDPath $dockerdPath
 if ($LastExitCode -ne 0) {
@@ -41,16 +42,18 @@ if ($LastExitCode -ne 0) {
 # https://github.com/Azure/azure-cli/issues/18766
 New-Item -ItemType SymbolicLink -Path "C:\Windows\SysWOW64\docker.exe" -Target "C:\Windows\System32\docker.exe"
 
-Write-Host "Download docker images"
-$dockerImages = (Get-ToolsetContent).docker.images
-foreach ($dockerImage in $dockerImages) {
-    Write-Host "Pulling docker image $dockerImage ..."
-    docker pull $dockerImage
+if (-not (Test-IsWin25-X64)) {
+    Write-Host "Download docker images"
+    $dockerImages = (Get-ToolsetContent).docker.images
+    foreach ($dockerImage in $dockerImages) {
+        Write-Host "Pulling docker image $dockerImage ..."
+        docker pull $dockerImage
 
-    if (!$?) {
-        throw "Docker pull failed with a non-zero exit code ($LastExitCode)"
+        if (!$?) {
+            throw "Docker pull failed with a non-zero exit code ($LastExitCode)"
+        }
     }
+    Invoke-PesterTests -TestFile "Docker" -TestName "DockerImages"
 }
 
 Invoke-PesterTests -TestFile "Docker" -TestName "Docker"
-Invoke-PesterTests -TestFile "Docker" -TestName "DockerImages"

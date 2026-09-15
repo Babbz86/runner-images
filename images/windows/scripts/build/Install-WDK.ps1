@@ -4,32 +4,39 @@
 ################################################################################
 
 # Requires Windows SDK with the same version number as the WDK
-if (Test-IsWin19) {
-    # Install all features without showing the GUI using winsdksetup.exe
-    Install-Binary -Type EXE `
-        -Url 'https://go.microsoft.com/fwlink/?linkid=2173743' `
-        -InstallArgs @("/features", "+", "/quiet") `
-        -ExpectedSignature '44796EB5BD439B4BFB078E1DC2F8345AE313CBB1'
-
-    $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2166289"
-    $wdkSignatureThumbprint = "914A09C2E02C696AF394048BCB8D95449BCD5B9E"
-    $wdkExtensionPath = "C:\Program Files (x86)\Windows Kits\10\Vsix\VS2019\WDK.vsix"
-} elseif (Test-IsWin22) {
+if (Test-IsWin22-X64) {
     # SDK is available through Visual Studio
-    $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2249371"
-    $wdkSignatureThumbprint = "7C94971221A799907BB45665663BBFD587BAC9F8"
-    $wdkExtensionPath = "C:\Program Files (x86)\Windows Kits\10\Vsix\VS2022\*\WDK.vsix"
+    $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2324617"
+} elseif (Test-IsWin11-Arm64) {
+    # SDK is available through Visual Studio
+    $wdkUrl = "https://go.microsoft.com/fwlink/?linkid=2335869"
 } else {
-    throw "Invalid version of Visual Studio is found. Either 2019 or 2022 are required"
+    throw "Invalid version of Visual Studio is found. Windows Server 2022 is required"
 }
 
 # Install all features without showing the GUI using wdksetup.exe
 Install-Binary -Type EXE `
     -Url $wdkUrl `
     -InstallArgs @("/features", "+", "/quiet") `
-    -ExpectedSignature $wdkSignatureThumbprint
+    -ExpectedSubject $(Get-MicrosoftPublisher)
 
-# Need to install the VSIX to get the build targets when running VSBuild
-Install-VSIXFromFile (Resolve-Path -Path $wdkExtensionPath)
+# Chromium's vs_toolchain.py needs Debuggers\x64\dbghelp.dll for its win_clang_x64 host
+# toolchain even in a native arm64 build, and nothing creates that folder on ARM64.
+# The x64 dbghelp.dll comes from the WDK payload above, so this must stay after the install.
+if (Test-IsWin11-Arm64) {
+    $kitsRoot = "${env:ProgramFiles(x86)}\Windows Kits\10"
+    $x64DbgHelp = Get-ChildItem "$kitsRoot\bin\*\x64\dbghelp.dll" -ErrorAction SilentlyContinue `
+        | Sort-Object { $_.VersionInfo.FileVersionRaw } -Descending | Select-Object -First 1
+    if (-not $x64DbgHelp) {
+        throw "x64 dbghelp.dll not found under $kitsRoot\bin - cannot stage x64 Debugging Tools"
+    }
+    $x64DebuggersDir = Join-Path $kitsRoot "Debuggers\x64"
+    New-Item -ItemType Directory -Force -Path $x64DebuggersDir | Out-Null
+    # Do not clobber an existing copy - if a future SDK ever ships its own x64 debuggers, keep it.
+    $destDbgHelp = Join-Path $x64DebuggersDir "dbghelp.dll"
+    if (-not (Test-Path $destDbgHelp)) {
+        Copy-Item -Path $x64DbgHelp.FullName -Destination $destDbgHelp -Force
+    }
+}
 
 Invoke-PesterTests -TestFile "WDK"

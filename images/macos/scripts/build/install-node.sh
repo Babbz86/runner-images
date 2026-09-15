@@ -8,6 +8,14 @@ source ~/utils/utils.sh
 
 defaultVersion=$(get_toolset_value '.node.default')
 
+if ! is_Arm64; then
+    # Node dependency simdjson is not available for Intel macOS images since 2026.08.31
+    COMMIT=e13ded35d324fe5e3eb9ac4d3c2be05cab13cf72
+    FILE_NAME="s/simdjson.rb"
+    FORMULA_NAME="simdjson"
+    brew_install_pinned_formula "$FORMULA_NAME" "$FILE_NAME" "$COMMIT"
+fi
+
 echo "Installing Node.js $defaultVersion"
 brew_smart_install "node@$defaultVersion"
 brew link node@$defaultVersion --force --overwrite
@@ -15,13 +23,5 @@ brew link node@$defaultVersion --force --overwrite
 echo Installing yarn...
 yarn_installer_path=$(download_with_retry "https://yarnpkg.com/install.sh")
 bash $yarn_installer_path
-
-if is_Monterey; then
-  npm_global_packages=$(get_toolset_value '.npm.global_packages[].name')
-  for module in ${npm_global_packages[@]}; do
-    echo "Install $module"
-    npm install -g $module
-done
-fi
 
 invoke_tests "Node" "Node.js"
